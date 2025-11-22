@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go get:*)",
+      "Bash(go run:*)",
+      "WebFetch(domain:query1.finance.yahoo.com)",
+      "WebFetch(domain:query2.finance.yahoo.com)",
+      "Bash(curl:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:finnhub.io)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
