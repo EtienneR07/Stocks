@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"sync"
+
 	"log"
 	"os"
 
 	"github.com/Finnhub-Stock-API/finnhub-go/v2"
 	"github.com/joho/godotenv"
+	"golang.org/x/time/rate"
 )
 
 type FundamentalData struct {
@@ -24,18 +27,31 @@ type FundamentalData struct {
 	Beta              float64
 	BookValuePerShare float64
 	CurrentPrice      float64
+	PBRatio           float64
+}
+
+var (
+	apiKey     string
+	apiKeyOnce sync.Once
+)
+
+// initAPIKey loads the API key once
+func initAPIKey() {
+	apiKeyOnce.Do(func() {
+		err := godotenv.Load()
+		if err != nil {
+			log.Fatal("Error loading .env file")
+		}
+
+		apiKey = os.Getenv("FINNHUB_API_KEY")
+		if apiKey == "" {
+			log.Fatal("FINNHUB_API_KEY environment variable not set")
+		}
+	})
 }
 
 func GetFundamentalData(symbol string) (*FundamentalData, error) {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
-	apiKey := os.Getenv("FINNHUB_API_KEY")
-	if apiKey == "" {
-		log.Fatal("FINNHUB_API_KEY environment variable not set")
-	}
+	initAPIKey()
 
 	cfg := finnhub.NewConfiguration()
 	cfg.AddDefaultHeader("X-Finnhub-Token", apiKey)
@@ -43,19 +59,16 @@ func GetFundamentalData(symbol string) (*FundamentalData, error) {
 
 	ctx := context.Background()
 
-	// Get company profile for name and market cap
 	profile, _, err := client.CompanyProfile2(ctx).Symbol(symbol).Execute()
 	if err != nil {
 		return nil, err
 	}
 
-	// Get basic financials
 	financials, _, err := client.CompanyBasicFinancials(ctx).Symbol(symbol).Metric("all").Execute()
 	if err != nil {
 		return nil, err
 	}
 
-	// Get current quote for price
 	quote, _, err := client.Quote(ctx).Symbol(symbol).Execute()
 	if err != nil {
 		return nil, err
@@ -78,17 +91,35 @@ func GetFundamentalData(symbol string) (*FundamentalData, error) {
 		DividendYield:     getMetricFloat(metric, "currentDividendYieldTTM"),
 		Beta:              getMetricFloat(metric, "beta"),
 		BookValuePerShare: getMetricFloat(metric, "bookValuePerShareQuarterly"),
+		PBRatio:           float64(quote.GetC()) / getMetricFloat(metric, "bookValuePerShareQuarterly"),
 	}
 
 	return data, nil
 }
 
-// Helper function to safely extract float values from metric map
+func FetchWorker(symbolChan <-chan string, resultChan chan<- *FundamentalData, limiter *rate.Limiter, ctx context.Context) {
+	for symbol := range symbolChan {
+		if err := limiter.Wait(ctx); err != nil {
+			log.Printf("Rate limiter error: %v\n", err)
+			continue
+		}
+
+		data, err := GetFundamentalData(symbol)
+		if err != nil {
+			log.Printf("Error fetching %s: %v\n", symbol, err)
+			continue
+		}
+
+		resultChan <- data
+	}
+}
+
 func getMetricFloat(metric map[string]interface{}, key string) float64 {
 	if val, ok := metric[key]; ok {
 		if floatVal, ok := val.(float64); ok {
 			return floatVal
 		}
 	}
+
 	return 0.0
 }
