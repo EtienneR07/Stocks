@@ -117,14 +117,53 @@ func writeResults(fileName string, resultChan <-chan *api.FundamentalData, done 
 		if err != nil {
 			log.Printf("Error writing to file: %v\n", err)
 		}
-
 	}
 
 	done <- true
 }
 
 func getValueStocks(exchange string) {
+	start := time.Now()
 
+	fileName := fmt.Sprintf("./fundamentals_%s.json", exchange)
+	fileData, err := utils.ReadFile[api.FundamentalData](fileName)
+
+	if err != nil {
+		log.Printf("Error read from file: %v\n", err)
+		return
+	}
+
+	var filteredSymbols []api.FundamentalData
+
+	for _, symbol := range fileData {
+		if symbol.PBRatio > 0 && symbol.PBRatio < 1.5 &&
+			symbol.PERatio > 0 && symbol.PERatio < 15 &&
+			symbol.DebtToEquity < 1.0 &&
+			symbol.ROE > 15 &&
+			symbol.ProfitMargin > 20 &&
+			symbol.CurrentPrice > 0 {
+			filteredSymbols = append(filteredSymbols, symbol)
+		}
+	}
+
+	fmt.Printf("%d out of %d passed filters\n", len(filteredSymbols), len(fileData))
+
+	outFileName := fmt.Sprintf("./value_stocks_%s.json", exchange)
+	jsonData, err := json.MarshalIndent(filteredSymbols, "", "  ")
+	if err != nil {
+		log.Printf("Error marshaling JSON: %v\n", err)
+		return
+	}
+
+	err = os.WriteFile(outFileName, jsonData, 0644)
+	if err != nil {
+		log.Printf("Error writing to file: %v\n", err)
+		return
+	}
+
+	elapsed := time.Since(start)
+
+	fmt.Printf("Wrote %d symbols to %s in %v\n", len(filteredSymbols), outFileName, elapsed)
 }
 
 func processPbRatio(exchange string) {
@@ -235,7 +274,7 @@ func testCPUWork(numGoroutines int) {
 	close(taskCh)
 
 	wg.Wait()
-	
+
 	close(resultCh)
 
 	<-done
